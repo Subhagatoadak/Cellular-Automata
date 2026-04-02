@@ -97,6 +97,8 @@ export default function RuleSelector({ config, onChange, rulesData }) {
       // life_3d defaults
       grid_size: 18,
       rule_3d: '445',
+      // epidemic defaults
+      forecast_weeks: 52,
     }
     onChange(base)
   }
@@ -387,35 +389,22 @@ export default function RuleSelector({ config, onChange, rulesData }) {
       {/* ── Epidemic params ─── */}
       {config.automata_type === 'epidemic' && (
         <div className="section">
-          <div className="section-label">COVID-19 Simulation</div>
+          <div className="section-label">COVID Country-Cell Automaton</div>
           <div className="epi-info-box">
-            <div className="epi-info-row"><span className="epi-dot" style={{background:'#0066ff'}} />Low infection rate</div>
-            <div className="epi-info-row"><span className="epi-dot" style={{background:'#ffcc00'}} />Moderate spread</div>
-            <div className="epi-info-row"><span className="epi-dot" style={{background:'#ff2020'}} />High infection rate</div>
-            <div className="epi-info-row"><span className="epi-dot" style={{background:'#33cc33'}} />Vaccination arc</div>
+            <div className="epi-info-row"><span className="epi-dot" style={{background:'#2f8cff'}} />Seeded cell state</div>
+            <div className="epi-info-row"><span className="epi-dot" style={{background:'#ffb347'}} />Wave cell state</div>
+            <div className="epi-info-row"><span className="epi-dot" style={{background:'#ff5f45'}} />Crisis cell state</div>
+            <div className="epi-info-row"><span className="epi-dot" style={{background:'#9be564'}} />Recovery / shielded states</div>
           </div>
-          <div className="field" style={{marginTop:'10px'}}>
-            <label>Simulation horizon</label>
-            <div className="radio-row" style={{flexDirection:'column',gap:'6px'}}>
-              {[
-                {v:130, label:'Wave Focus (2020–2022)'},
-                {v:200, label:'Historic (2019–2023)'},
-                {v:260, label:'To Present (2019–2024)'},
-                {v:320, label:'Full Story (2019–2026)'},
-              ].map(o => (
-                <label key={o.v} className={`radio-label ${config.generations===o.v?'active':''}`}
-                  style={config.generations===o.v?{borderColor:accent,color:accent}:{}}>
-                  <input type="radio" name="epiHorizon" value={o.v}
-                    checked={config.generations===o.v}
-                    onChange={() => onChange({generations:o.v})} />
-                  {o.label}
-                </label>
-              ))}
-            </div>
-          </div>
+          <SliderField label={`Forecast extension: ${config.forecast_weeks ?? 52} weeks`}
+            min={0} max={104} step={4}
+            value={config.forecast_weeks ?? 52}
+            accent={accent}
+            onChange={v => onChange({forecast_weeks:v})}
+          />
           <p className="type-desc">
-            SEIR-CA model with 50 countries. Fetches real WHO data from disease.sh.
-            Includes 8 epidemic phases: Pre-pandemic → Lockdowns → Vaccines → Delta → Omicron → Endemic → Forecast.
+            Historical replay now runs through the current date, then extends into forecast weeks.
+            Each country is a CA cell with discrete outbreak states, and the backend can use the OpenAI API to translate the observed pattern into CA tuning.
           </p>
         </div>
       )}

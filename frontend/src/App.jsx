@@ -52,7 +52,8 @@ const DEFAULT_CONFIG = {
   // life_3d
   grid_size: 18,
   rule_3d: '445',
-  // epidemic (uses generations as total_weeks)
+  // epidemic
+  forecast_weeks: 52,
 }
 
 // ─── Animated starfield background ────────────────────────────────────────────
@@ -130,7 +131,7 @@ export default function App() {
       'num_strains','spread_rate','death_rate','nutrient_density',
       'num_lanes','car_density','max_speed','brake_prob','light_period',
       'palette_name','image_rule','seed_type',
-      'grid_size','rule_3d',
+      'grid_size','rule_3d','forecast_weeks',
     ])
     if (Object.keys(patch).some((k) => computeKeys.has(k))) {
       setIsStale(true)
@@ -229,7 +230,17 @@ export default function App() {
               {data.automata_type === 'life_3d' ? (
                 <span className="badge badge-dim">{data.grid_size}³ grid</span>
               ) : data.automata_type === 'epidemic' ? (
-                <span className="badge badge-dim">50 countries</span>
+                <>
+                  <span className="badge badge-dim">{Object.keys(data.countries_meta ?? {}).length} countries</span>
+                  <span className="badge badge-dim">
+                    {data.forecast_weeks > 0 ? `${data.forecast_weeks} forecast weeks` : 'Historical only'}
+                  </span>
+                  <span className="badge badge-dim">
+                    {data.ai_translation?.source === 'openai'
+                      ? `OpenAI ${data.ai_translation.model}`
+                      : 'Heuristic CA translator'}
+                  </span>
+                </>
               ) : (
                 <span className="badge badge-dim">
                   {data.width}{data.automata_type !== 'elementary' ? `×${data.height}` : ''} cells
@@ -316,6 +327,7 @@ export default function App() {
                 onSpeedChange={setSpeed}
                 currentGen={currentGen}
                 totalGenerations={totalGenerations}
+                frameLabel={data.automata_type === 'epidemic' ? 'Week' : 'Gen'}
                 disabled={!data}
                 accent={accent}
               />

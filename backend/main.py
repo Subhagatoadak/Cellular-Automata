@@ -13,7 +13,7 @@ from automata.bacteria import compute_bacteria
 from automata.traffic import compute_traffic
 from automata.image_ca import compute_image_ca
 from automata.life3d import compute_life3d
-from automata.epidemic import compute_epidemic
+from automata.epidemic import compute_epidemic, epidemic_timeline_context
 
 app = FastAPI(title="Cellular Automata API", version="3.0.0")
 
@@ -67,7 +67,7 @@ class ComputeRequest(BaseModel):
     grid_size: int = Field(18, ge=8, le=28)
     rule_3d: Literal["445", "5766", "B5S45", "amoeba", "crystal", "pyroclastic"] = "445"
     # Epidemic
-    forecast_weeks: int = Field(0, ge=0, le=52)
+    forecast_weeks: int = Field(52, ge=0, le=156)
 
 
 @app.get("/api/health")
@@ -99,8 +99,8 @@ def get_rules():
              "description": "Multi-color image formation via CA rules — cyclic spirals, Turing patterns, diffusion art."},
             {"id": "life_3d",      "name": "3D Game of Life", "label": "3D",  "category": "3d",
              "description": "True 3D cellular automaton in a cubic grid. Six rule variants produce wildly different structures."},
-            {"id": "epidemic",     "name": "COVID-19 Forecast","label": "GEO", "category": "applied",
-             "description": "SEIR-CA world epidemic model using real COVID-19 data. Historic spread → endemic → 2-year forecast."},
+            {"id": "epidemic",     "name": "COVID Cellular Automata","label": "GEO", "category": "applied",
+             "description": "Hybrid SEIR + country-cell automaton with CA state bands, OpenAI pattern translation, real-data overlay, and forward forecast."},
         ],
         "presets": {
             "elementary": [
@@ -176,9 +176,10 @@ def get_rules():
                 {"name": "Pyroclastic",               "rule_3d": "pyroclastic","grid_size": 16, "density": 0.15},
             ],
             "epidemic": [
-                {"name": "Full COVID Story (2019–2026)", "generations": 320},
-                {"name": "Historic Only (2019–2023)",    "generations": 200},
-                {"name": "Waves Focus (2020–2022)",      "generations": 130},
+                {"name": "Live Snapshot",        "forecast_weeks": 0},
+                {"name": "26-Week Forecast",     "forecast_weeks": 26},
+                {"name": "52-Week Forecast",     "forecast_weeks": 52},
+                {"name": "104-Week Forecast",    "forecast_weeks": 104},
             ],
         },
     }
@@ -302,15 +303,25 @@ def compute(req: ComputeRequest):
             }
 
         elif req.automata_type == "epidemic":
-            total_w = min(max(req.generations, 100), 380)
-            result = compute_epidemic(total_weeks=total_w)
+            timeline = epidemic_timeline_context()
+            base_weeks = max(min(req.generations, timeline["max_total_weeks"]), timeline["present_week"] + 1)
+            total_w = min(base_weeks + req.forecast_weeks, timeline["max_total_weeks"])
+            result = compute_epidemic(total_weeks=total_w, forecast_weeks_extra=req.forecast_weeks)
             return {
                 "automata_type": req.automata_type,
-                "rule": "SEIR-CA",
+                "rule": "SEIR-CA + Country Cell States",
                 "total_generations": result["total_weeks"],
+                "present_date": result["present_date"],
                 "present_week": result["present_week"],
+                "forecast_start_week": result["forecast_start_week"],
+                "forecast_start_date": result["forecast_start_date"],
+                "forecast_end_date": result["forecast_end_date"],
+                "forecast_weeks": result["forecast_weeks"],
+                "max_forecast_weeks": result["max_forecast_weeks"],
                 "countries_meta": result["countries_meta"],
+                "ca_states": result["ca_states"],
                 "real_data": result["real_data"],
+                "ai_translation": result["ai_translation"],
                 "states": result["states"],
             }
 

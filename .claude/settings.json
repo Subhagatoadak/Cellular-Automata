@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls /Users/subhagatoadak/Documents/github2/Cellular-Automata/*.md)"
+    ]
+  }
+}

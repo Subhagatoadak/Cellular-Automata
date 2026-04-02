@@ -1,13 +1,15 @@
-import { useRef, useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import { feature } from 'topojson-client'
+import worldAtlas from 'world-atlas/countries-110m.json'
 
-// Equirectangular projection: (lat, lon) → (x, y) in canvas pixels
-function project(lat, lon, W, H) {
-  const x = ((lon + 180) / 360) * W
-  const y = ((90 - lat) / 180) * H
+const WORLD_FEATURES = feature(worldAtlas, worldAtlas.objects.countries).features
+
+function project(lat, lon, width, height) {
+  const x = ((lon + 180) / 360) * width
+  const y = ((90 - lat) / 180) * height
   return [x, y]
 }
 
-// Map active_per_million to a color (blue → yellow → red, log scale)
 function infColor(activePerM) {
   const t = Math.min(1, Math.log1p(activePerM / 50) / Math.log1p(200))
   let r, g, b
@@ -39,227 +41,277 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath()
 }
 
+function traceRing(ctx, ring, width, height) {
+  ring.forEach(([lon, lat], idx) => {
+    const [x, y] = project(lat, lon, width, height)
+    if (idx === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  })
+  ctx.closePath()
+}
+
+function drawWorldMap(ctx, width, height) {
+  ctx.save()
+  ctx.fillStyle = 'rgba(16, 42, 94, 0.95)'
+  ctx.strokeStyle = 'rgba(145, 198, 255, 0.14)'
+  ctx.lineWidth = 0.6
+
+  WORLD_FEATURES.forEach(({ geometry }) => {
+    if (!geometry) return
+    ctx.beginPath()
+    if (geometry.type === 'Polygon') {
+      geometry.coordinates.forEach((ring) => traceRing(ctx, ring, width, height))
+    } else if (geometry.type === 'MultiPolygon') {
+      geometry.coordinates.forEach((poly) => poly.forEach((ring) => traceRing(ctx, ring, width, height)))
+    }
+    ctx.fill('evenodd')
+    ctx.stroke()
+  })
+  ctx.restore()
+}
+
+function fmtTuning(label, value) {
+  const pct = Math.round((value - 1) * 100)
+  const sign = pct > 0 ? '+' : ''
+  return `${label} ${sign}${pct}%`
+}
+
 export default function EpidemicView({ data, currentGen }) {
-  const canvasRef    = useRef(null)
+  const canvasRef = useRef(null)
   const containerRef = useRef(null)
+  const frame = data?.states?.[currentGen]
+  const stateMeta = data?.ca_states ?? []
+  const stateMap = Object.fromEntries(stateMeta.map((state) => [state.label, state]))
+  const stateCounts = Object.entries(frame?.state_counts ?? {}).sort((a, b) => b[1] - a[1])
+  const hotspots = frame?.hotspots ?? []
+  const translation = data?.ai_translation ?? {}
+  const tuning = translation.tuning ?? {}
 
   useEffect(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
-    if (!canvas || !container || !data) return
+    if (!canvas || !container || !data || !frame) return
 
-    const W = container.clientWidth  || 800
-    const H = container.clientHeight || 480
-    canvas.width  = W
-    canvas.height = H
+    const width = container.clientWidth || 800
+    const height = container.clientHeight || 480
+    canvas.width = width
+    canvas.height = height
 
     const ctx = canvas.getContext('2d')
-    const frame = data.states?.[currentGen]
-    if (!frame) return
+    const meta = data.countries_meta ?? {}
+    const maxPop = Math.max(...Object.values(meta).map((country) => country.pop_m), 1)
 
-    const meta   = data.countries_meta ?? {}
-    const maxPop = Math.max(...Object.values(meta).map(m => m.pop_m), 1)
+    const bg = ctx.createLinearGradient(0, 0, 0, height)
+    bg.addColorStop(0, '#02081d')
+    bg.addColorStop(0.55, '#071533')
+    bg.addColorStop(1, '#020712')
+    ctx.fillStyle = bg
+    ctx.fillRect(0, 0, width, height)
 
-    // ── Background ────────────────────────────────────────────────────────────
-    const bgGrad = ctx.createLinearGradient(0, 0, 0, H)
-    bgGrad.addColorStop(0, '#010418')
-    bgGrad.addColorStop(1, '#020c24')
-    ctx.fillStyle = bgGrad
-    ctx.fillRect(0, 0, W, H)
+    const ocean = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, Math.max(width, height) / 1.3)
+    ocean.addColorStop(0, 'rgba(18, 58, 132, 0.32)')
+    ocean.addColorStop(1, 'rgba(2, 8, 24, 0)')
+    ctx.fillStyle = ocean
+    ctx.fillRect(0, 0, width, height)
 
-    // ── Ocean regions tint ────────────────────────────────────────────────────
-    const oceanGrad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)/1.5)
-    oceanGrad.addColorStop(0, 'rgba(5,20,60,0.5)')
-    oceanGrad.addColorStop(1, 'rgba(0,5,30,0)')
-    ctx.fillStyle = oceanGrad
-    ctx.fillRect(0, 0, W, H)
+    drawWorldMap(ctx, width, height)
 
-    // ── Lat/lon grid ──────────────────────────────────────────────────────────
-    ctx.strokeStyle = 'rgba(20,60,130,0.35)'
+    ctx.strokeStyle = 'rgba(58, 112, 185, 0.22)'
     ctx.lineWidth = 0.5
     for (let lon = -180; lon <= 180; lon += 30) {
-      const [gx] = project(0, lon, W, H)
-      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke()
+      const [x] = project(0, lon, width, height)
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, height)
+      ctx.stroke()
     }
     for (let lat = -90; lat <= 90; lat += 30) {
-      const [, gy] = project(lat, 0, W, H)
-      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke()
+      const [, y] = project(lat, 0, width, height)
+      ctx.beginPath()
+      ctx.moveTo(0, y)
+      ctx.lineTo(width, y)
+      ctx.stroke()
     }
 
-    // Equator highlight
-    const [, eqY] = project(0, 0, W, H)
-    ctx.strokeStyle = 'rgba(40,100,200,0.45)'
-    ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(0, eqY); ctx.lineTo(W, eqY); ctx.stroke()
-
-    // Prime meridian
-    const [pmX] = project(0, 0, W, H)
-    ctx.beginPath(); ctx.moveTo(pmX, 0); ctx.lineTo(pmX, H); ctx.stroke()
-
-    // ── Country bubbles ───────────────────────────────────────────────────────
     const countries = frame.countries ?? {}
     const countryNames = Object.keys(countries)
+    const sorted = [...countryNames].sort((a, b) => (countries[a]?.active_per_m ?? 0) - (countries[b]?.active_per_m ?? 0))
 
-    // Sort: draw low-infection first, high last (so hot spots are on top)
-    const sorted = [...countryNames].sort((a, b) => {
-      const aA = countries[a]?.active_per_m ?? 0
-      const bA = countries[b]?.active_per_m ?? 0
-      return aA - bA
-    })
+    sorted.forEach((name) => {
+      const cell = countries[name]
+      const country = meta[name]
+      if (!cell || !country) return
 
-    for (const name of sorted) {
-      const cdata = countries[name]
-      const m = meta[name]
-      if (!m || !cdata) continue
+      const [cx, cy] = project(country.lat, country.lon, width, height)
+      const activePerM = cell.active_per_m ?? 0
+      const vacPct = cell.vacc_pct ?? 0
+      const [r, g, b] = infColor(activePerM)
+      const stateColor = stateMap[cell.ca_label]?.color ?? '#7aa8ff'
+      const radius = Math.max(4, Math.sqrt(country.pop_m / maxPop) * Math.min(width, height) * 0.06)
+      const glowIntensity = Math.min(activePerM / 3000, 1)
 
-      const [cx, cy] = project(m.lat, m.lon, W, H)
-      const activePerM = cdata.active_per_m ?? 0
-      const vacPct     = cdata.vacc_pct ?? 0
-      const [r, g, b]  = infColor(activePerM)
-
-      const radius = Math.max(4, Math.sqrt(m.pop_m / maxPop) * Math.min(W, H) * 0.065)
-
-      // Vaccination arc (green outer ring)
       if (vacPct > 5) {
-        ctx.shadowBlur = 0
-        ctx.strokeStyle = `rgba(50,220,80,${Math.min(0.85, vacPct / 80)})`
+        ctx.strokeStyle = `rgba(70, 226, 122, ${Math.min(0.85, vacPct / 85)})`
         ctx.lineWidth = 2
         ctx.beginPath()
-        ctx.arc(cx, cy, radius + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (vacPct / 100))
+        ctx.arc(cx, cy, radius + 4.5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (vacPct / 100))
         ctx.stroke()
       }
 
-      // Glow for high infection
-      const glowIntensity = Math.min(activePerM / 3000, 1)
-      ctx.shadowBlur = radius * (1.5 + glowIntensity * 3)
-      ctx.shadowColor = `rgba(${r},${g},${b},${0.4 + glowIntensity * 0.5})`
-
-      // Radial gradient bubble
-      const bGrad = ctx.createRadialGradient(
-        cx - radius * 0.3, cy - radius * 0.3, 0,
-        cx, cy, radius
-      )
-      const alpha = 0.72 + glowIntensity * 0.25
-      bGrad.addColorStop(0, `rgba(${Math.min(r+90,255)},${Math.min(g+90,255)},${Math.min(b+90,255)},${alpha})`)
-      bGrad.addColorStop(1, `rgba(${r},${g},${b},${alpha * 0.65})`)
-      ctx.fillStyle = bGrad
+      ctx.shadowBlur = radius * (1.4 + glowIntensity * 3)
+      ctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${0.35 + glowIntensity * 0.5})`
+      const fill = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.3, 0, cx, cy, radius)
+      fill.addColorStop(0, `rgba(${Math.min(r + 85, 255)}, ${Math.min(g + 85, 255)}, ${Math.min(b + 85, 255)}, 0.92)`)
+      fill.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0.52)`)
+      ctx.fillStyle = fill
       ctx.beginPath()
       ctx.arc(cx, cy, radius, 0, Math.PI * 2)
       ctx.fill()
+
       ctx.shadowBlur = 0
+      ctx.strokeStyle = stateColor
+      ctx.lineWidth = 1.6 + glowIntensity
+      ctx.beginPath()
+      ctx.arc(cx, cy, radius + 1.5, 0, Math.PI * 2)
+      ctx.stroke()
 
-      // Country name label for larger countries
-      if (radius > 9) {
-        ctx.font = `${Math.max(7, Math.min(10, radius * 0.85))}px Inter, sans-serif`
-        ctx.fillStyle = 'rgba(220,235,255,0.85)'
+      if (radius > 8) {
+        ctx.font = `${Math.max(7, Math.min(10, radius * 0.85))}px "JetBrains Mono", monospace`
+        ctx.fillStyle = 'rgba(230, 240, 255, 0.82)'
         ctx.textAlign = 'center'
-        ctx.fillText(name.length > 10 ? name.slice(0, 10) + '…' : name, cx, cy + radius + 10)
+        ctx.fillText(name.length > 11 ? `${name.slice(0, 11)}…` : name, cx, cy + radius + 11)
       }
-    }
+    })
 
-    // ── Phase / date badge (top center) ───────────────────────────────────────
-    const isForecast = frame.is_forecast ?? false
-    const dateStr    = frame.date ?? ''
-    const phaseLabel = frame.label ?? frame.phase ?? ''
-    const badgeW = Math.min(260, W * 0.38), badgeH = 46
-    const badgeX = W / 2 - badgeW / 2, badgeY = 10
-
-    ctx.fillStyle = isForecast ? 'rgba(180,50,0,0.82)' : 'rgba(10,60,160,0.82)'
-    roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 10)
+    const badgeWidth = Math.min(280, width * 0.4)
+    const badgeHeight = 48
+    const badgeX = width / 2 - badgeWidth / 2
+    const badgeY = 12
+    ctx.fillStyle = frame.is_forecast ? 'rgba(180, 58, 24, 0.86)' : 'rgba(15, 78, 168, 0.82)'
+    roundRect(ctx, badgeX, badgeY, badgeWidth, badgeHeight, 12)
     ctx.fill()
 
-    ctx.font = `bold ${Math.max(11, Math.min(13, W * 0.016))}px Inter, sans-serif`
+    ctx.font = `bold ${Math.max(11, Math.min(13, width * 0.016))}px "JetBrains Mono", monospace`
     ctx.fillStyle = '#ffffff'
     ctx.textAlign = 'center'
-    ctx.fillText(`${isForecast ? '🔮 Forecast' : '📅 Historical'} · ${phaseLabel}`, W/2, badgeY + 18)
+    ctx.fillText(`${frame.is_forecast ? 'Forecast' : 'Historical'} · ${frame.label}`, width / 2, badgeY + 19)
 
-    ctx.font = `${Math.max(9, Math.min(11, W * 0.013))}px Inter, sans-serif`
-    ctx.fillStyle = 'rgba(200,220,255,0.9)'
-    ctx.fillText(`${dateStr}  ·  Week ${frame.week ?? currentGen}`, W/2, badgeY + 34)
+    ctx.font = `${Math.max(9, Math.min(11, width * 0.013))}px "JetBrains Mono", monospace`
+    ctx.fillStyle = 'rgba(214, 228, 255, 0.9)'
+    ctx.fillText(`${frame.date} · Week ${frame.week}`, width / 2, badgeY + 35)
 
-    // ── Legend panel (bottom left) ────────────────────────────────────────────
-    const legX = 10, legY = H - 130, legW = 210, legH = 120
-    ctx.fillStyle = 'rgba(2,8,32,0.80)'
-    roundRect(ctx, legX, legY, legW, legH, 8)
+    const statsX = 12
+    const statsY = height - 112
+    const statsW = 214
+    const statsH = 100
+    ctx.fillStyle = 'rgba(3, 11, 28, 0.84)'
+    roundRect(ctx, statsX, statsY, statsW, statsH, 12)
     ctx.fill()
 
-    ctx.font = `bold 11px Inter, sans-serif`
-    ctx.fillStyle = 'rgba(160,200,255,0.9)'
+    ctx.font = 'bold 11px "JetBrains Mono", monospace'
+    ctx.fillStyle = 'rgba(166, 205, 255, 0.94)'
     ctx.textAlign = 'left'
-    ctx.fillText('Active infection rate', legX + 8, legY + 16)
+    ctx.fillText('Global System State', statsX + 10, statsY + 16)
 
-    // Color gradient bar
-    const barX = legX + 8, barY = legY + 22, barW2 = legW - 16, barH2 = 11
-    const colorBar = ctx.createLinearGradient(barX, 0, barX + barW2, 0)
-    colorBar.addColorStop(0,   '#0066ff')
-    colorBar.addColorStop(0.4, '#ffcc00')
-    colorBar.addColorStop(1,   '#ff2020')
-    ctx.fillStyle = colorBar
-    ctx.fillRect(barX, barY, barW2, barH2)
+    ctx.font = '10px "JetBrains Mono", monospace'
+    ctx.fillStyle = 'rgba(255, 196, 115, 0.95)'
+    ctx.fillText(`Cases:   ${frame.global_cases.toFixed(1)}M`, statsX + 10, statsY + 40)
+    ctx.fillStyle = 'rgba(255, 110, 110, 0.95)'
+    ctx.fillText(`Deaths:  ${frame.global_deaths.toFixed(2)}M`, statsX + 10, statsY + 58)
+    ctx.fillStyle = 'rgba(112, 230, 132, 0.95)'
+    ctx.fillText(`Vacc:    ${frame.global_vacc_pct.toFixed(1)}%`, statsX + 10, statsY + 76)
+    ctx.fillStyle = 'rgba(109, 210, 255, 0.95)'
+    ctx.fillText(`Active:  ${frame.global_active.toFixed(2)}M`, statsX + 10, statsY + 94)
 
-    ctx.font = '9px Inter, sans-serif'
-    ctx.fillStyle = 'rgba(160,200,255,0.7)'
-    ctx.textAlign = 'left';  ctx.fillText('Low',   barX,            barY + barH2 + 11)
-    ctx.textAlign = 'center';ctx.fillText('Medium', barX + barW2/2, barY + barH2 + 11)
-    ctx.textAlign = 'right'; ctx.fillText('High',  barX + barW2,   barY + barH2 + 11)
-
-    // Global stats
-    const g_cases  = frame.global_cases  ?? 0  // millions
-    const g_deaths = frame.global_deaths ?? 0  // millions
-    const g_vacc   = frame.global_vacc_pct ?? 0
-
-    ctx.textAlign = 'left'
-    ctx.font = '10px Inter, monospace'
-
-    ctx.fillStyle = 'rgba(255,180,80,0.92)'
-    ctx.fillText(`Cases: ${g_cases.toFixed(1)}M cumulative`, legX + 8, legY + 68)
-    ctx.fillStyle = 'rgba(255,100,100,0.92)'
-    ctx.fillText(`Deaths: ${g_deaths.toFixed(2)}M cumulative`, legX + 8, legY + 84)
-    ctx.fillStyle = 'rgba(80,230,100,0.92)'
-    ctx.fillText(`Vaccinated: ${g_vacc.toFixed(1)}% global`, legX + 8, legY + 100)
-
-    const circleR = 5
-    ctx.fillStyle = 'rgba(50,200,80,0.75)'
-    ctx.beginPath(); ctx.arc(legX + 8 + circleR, legY + 112, circleR, 0, Math.PI * 2); ctx.fill()
-    ctx.fillStyle = 'rgba(160,200,255,0.7)'
-    ctx.font = '9px Inter, sans-serif'
-    ctx.fillText('Green arc = vaccination %', legX + 18, legY + 116)
-
-    // ── Real data overlay (bottom right) ─────────────────────────────────────
-    if (data.real_data && !isForecast) {
-      const rd     = data.real_data
-      const wk     = frame.week ?? currentGen
-      const rdCases  = rd.cases?.[wk]  ?? null
-      const rdDeaths = rd.deaths?.[wk] ?? null
-      if (rdCases !== null) {
-        const rdW = Math.min(200, W * 0.27), rdH = 68
-        const rdX = W - rdW - 10, rdY = H - rdH - 10
-        ctx.fillStyle = 'rgba(2,8,32,0.80)'
-        roundRect(ctx, rdX, rdY, rdW, rdH, 8)
+    if (data.real_data && !frame.is_forecast) {
+      const realCases = data.real_data.cases?.[frame.week] ?? null
+      const realDeaths = data.real_data.deaths?.[frame.week] ?? null
+      if (realCases !== null) {
+        const panelW = Math.min(228, width * 0.3)
+        const panelH = 72
+        const panelX = width - panelW - 14
+        const panelY = height - panelH - 14
+        ctx.fillStyle = 'rgba(3, 11, 28, 0.84)'
+        roundRect(ctx, panelX, panelY, panelW, panelH, 12)
         ctx.fill()
 
-        ctx.font = 'bold 10px Inter, sans-serif'
-        ctx.fillStyle = 'rgba(100,180,255,0.95)'
-        ctx.textAlign = 'left'
-        ctx.fillText('WHO Real Data', rdX + 8, rdY + 16)
+        ctx.font = 'bold 10px "JetBrains Mono", monospace'
+        ctx.fillStyle = 'rgba(109, 180, 255, 0.95)'
+        ctx.fillText('Real Data Overlay', panelX + 10, panelY + 16)
 
-        ctx.font = '10px Inter, monospace'
-        ctx.fillStyle = 'rgba(255,200,100,0.90)'
-        ctx.fillText(`Cases:  ${rdCases.toLocaleString()}`, rdX + 8, rdY + 34)
-        ctx.fillStyle = 'rgba(255,120,120,0.90)'
-        ctx.fillText(`Deaths: ${rdDeaths?.toLocaleString() ?? '—'}`, rdX + 8, rdY + 50)
+        ctx.font = '10px "JetBrains Mono", monospace'
+        ctx.fillStyle = 'rgba(255, 201, 108, 0.9)'
+        ctx.fillText(`Cases:  ${realCases.toLocaleString()}`, panelX + 10, panelY + 38)
+        ctx.fillStyle = 'rgba(255, 120, 120, 0.9)'
+        ctx.fillText(`Deaths: ${realDeaths?.toLocaleString() ?? '—'}`, panelX + 10, panelY + 54)
 
-        ctx.font = '8px Inter, sans-serif'
-        ctx.fillStyle = 'rgba(100,150,255,0.6)'
-        ctx.fillText('source: disease.sh', rdX + 8, rdY + 63)
+        ctx.font = '8px "JetBrains Mono", monospace'
+        ctx.fillStyle = 'rgba(124, 166, 228, 0.62)'
+        ctx.fillText(`source: ${data.real_data.source}`, panelX + 10, panelY + 66)
       }
     }
+  }, [data, frame, currentGen, stateMap])
 
-  }, [data, currentGen])
+  if (!frame) return null
+
+  const translationLabel = translation.source === 'openai' ? 'OpenAI Pattern Translation' : 'CA Pattern Translation'
 
   return (
-    <div ref={containerRef} className="canvas-container epidemic-view">
-      <canvas ref={canvasRef} className="automata-canvas epidemic-canvas" />
+    <div className="canvas-container epidemic-view" ref={containerRef}>
+      <canvas ref={canvasRef} className="epidemic-canvas" />
+
+      <div className="epi-panel epi-panel-ai">
+        <div className="epi-kicker">
+          {translationLabel}
+          {translation.model ? ` · ${translation.model}` : ''}
+        </div>
+        <div className="epi-title">{translation.headline || 'Country-cell states are steering the outbreak model.'}</div>
+        <div className="epi-copy">{translation.summary}</div>
+        <div className="epi-rule">{translation.cell_rule}</div>
+        <div className="epi-tuning">
+          {tuning.neighbor_weight && <span>{fmtTuning('Neighbor', tuning.neighbor_weight)}</span>}
+          {tuning.travel_weight && <span>{fmtTuning('Travel', tuning.travel_weight)}</span>}
+          {tuning.seasonality_weight && <span>{fmtTuning('Season', tuning.seasonality_weight)}</span>}
+          {tuning.recovery_drag && <span>{fmtTuning('Recovery', tuning.recovery_drag)}</span>}
+          {tuning.vaccination_shield && <span>{fmtTuning('Shield', tuning.vaccination_shield)}</span>}
+        </div>
+      </div>
+
+      <div className="epi-panel epi-panel-forecast">
+        <div className="epi-kicker">Forecast Window</div>
+        <div className="epi-title">
+          {frame.is_forecast ? 'Playback is inside forecast weeks.' : 'Playback is inside historical replay.'}
+        </div>
+        <div className="epi-copy">
+          Present date: {data.present_date}
+          <br />
+          Forecast start: {data.forecast_start_date}
+          <br />
+          Forecast end: {data.forecast_end_date}
+        </div>
+        <div className="epi-footnote">{translation.forecast_focus}</div>
+      </div>
+
+      <div className="epi-panel epi-panel-states">
+        <div className="epi-kicker">Country Cell States</div>
+        <div className="epi-state-list">
+          {stateCounts.slice(0, 4).map(([label, count]) => (
+            <div key={label} className="epi-state-row">
+              <span className="epi-state-dot" style={{ background: stateMap[label]?.color ?? '#88aaff' }} />
+              <span>{label}</span>
+              <span>{count}</span>
+            </div>
+          ))}
+        </div>
+        <div className="epi-hotspots">
+          {hotspots.slice(0, 4).map((spot) => (
+            <div key={spot.country} className="epi-hotspot-row">
+              <span>{spot.country}</span>
+              <span>{spot.ca_label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

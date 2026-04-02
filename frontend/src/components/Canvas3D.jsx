@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from 'react'
 
 // ─── Vertex Shader (terrain) ─────────────────────────────────────────────────
 const TERRAIN_VERT = `
+precision mediump float;
 attribute vec3 aPos;
 attribute vec3 aNorm;
 attribute vec3 aCol;
@@ -36,6 +37,7 @@ void main() {
 
 // ─── Point Sprite Shader (3D GoL) ─────────────────────────────────────────────
 const POINT_VERT = `
+precision mediump float;
 attribute vec3 aPos;
 attribute vec3 aCol;
 uniform mat4 uMVP;

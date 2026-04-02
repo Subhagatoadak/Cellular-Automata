@@ -24,6 +24,7 @@ export default function Controls({
   onStepBack, onStepForward, onReset,
   looping, onToggleLoop,
   speed, onSpeedChange,
+  frameLabel = 'Gen',
   currentGen, totalGenerations,
   disabled, accent,
 }) {
@@ -73,7 +74,7 @@ export default function Controls({
 
         {/* Center: generation counter */}
         <div className="gen-info">
-          <span className="gen-label">Gen</span>
+          <span className="gen-label">{frameLabel}</span>
           <span className="gen-value" style={{ color: accent }}>{currentGen + 1}</span>
           <span className="gen-sep">/</span>
           <span className="gen-total">{totalGenerations}</span>
